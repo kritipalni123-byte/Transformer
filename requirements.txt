@@ -1,10 +1,6 @@
 streamlit
 pandas
 feedparser
-openpyxl
-plotly
-groq
 requests
 beautifulsoup4
 lxml
-
