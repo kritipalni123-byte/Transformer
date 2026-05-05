@@ -6,12 +6,19 @@ import requests
 from bs4 import BeautifulSoup
 
 # -------------------------------
+# PAGE CONFIG
+# -------------------------------
+st.set_page_config(page_title="Transformer Intelligence", layout="wide")
+
+st.title("🔌 Transformer Intelligence Dashboard")
+st.caption("Live competitor & product tracking")
+
+# -------------------------------
 # CONFIG
 # -------------------------------
-
 RSS_FEEDS = [
-    "https://news.google.com/rss/search?q=transformer+industry",
     "https://news.google.com/rss/search?q=power+transformer",
+    "https://news.google.com/rss/search?q=transformer+industry"
 ]
 
 COMPETITORS = [
@@ -20,9 +27,8 @@ COMPETITORS = [
 ]
 
 # -------------------------------
-# PRODUCT KEYWORDS
+# PRODUCT LOGIC (FIXED)
 # -------------------------------
-
 PRODUCT_KEYWORDS = {
     "Oil Filled Transformer": [
         "oil filled transformer",
@@ -34,12 +40,10 @@ PRODUCT_KEYWORDS = {
         "ofaf cooling",
         "oil cooled transformer"
     ],
-    
     "Dry Type VPI Transformer": [
         "vpi transformer",
         "vacuum pressure impregnated transformer"
     ],
-    
     "Dry Type CRT Transformer": [
         "cast resin transformer",
         "crt transformer",
@@ -56,19 +60,15 @@ EXCLUDE_KEYWORDS = [
 # -------------------------------
 # FUNCTIONS
 # -------------------------------
-
 def classify_product(text):
-    text = text.lower()
+    text = str(text).lower()
 
-    # Exclude irrelevant oil context
     if any(word in text for word in EXCLUDE_KEYWORDS):
         return "Ignore"
 
-    # Must contain transformer context
     if "transformer" not in text:
         return "Ignore"
 
-    # Match product
     for product, keywords in PRODUCT_KEYWORDS.items():
         for kw in keywords:
             if kw in text:
@@ -78,14 +78,15 @@ def classify_product(text):
 
 
 def detect_competitor(text):
+    text = str(text).lower()
     for comp in COMPETITORS:
-        if comp.lower() in text.lower():
+        if comp.lower() in text:
             return comp
     return "Other"
 
 
 def relevance_score(text):
-    text = text.lower()
+    text = str(text).lower()
     score = 40
 
     if "transformer" in text:
@@ -113,7 +114,6 @@ def fetch_news():
 
             text = title
 
-            # Try to fetch article content
             try:
                 res = requests.get(link, timeout=5)
                 soup = BeautifulSoup(res.text, "html.parser")
@@ -133,58 +133,86 @@ def fetch_news():
     return pd.DataFrame(articles)
 
 # -------------------------------
-# STREAMLIT UI
+# RUN PIPELINE
 # -------------------------------
-
-st.title("🔌 Transformer Competitor Intelligence Dashboard")
-
-if st.button("Fetch Latest News"):
+if st.button("🔄 Fetch Latest News"):
 
     df = fetch_news()
 
-    # Apply classification
-    df["product"] = df["text"].apply(classify_product)
-    df["competitor"] = df["text"].apply(detect_competitor)
-    df["score"] = df["text"].apply(relevance_score)
+    df["combined"] = df["title"] + " " + df["text"]
 
-    # Remove ignored
+    df["product"] = df["combined"].apply(classify_product)
+    df["competitor"] = df["combined"].apply(detect_competitor)
+    df["score"] = df["combined"].apply(relevance_score)
+
     df = df[df["product"] != "Ignore"]
 
-    # Sidebar filters
-    st.sidebar.header("Filters")
+    # -------------------------------
+    # DASHBOARD TABS
+    # -------------------------------
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📊 Overview",
+        "🏢 Competitors",
+        "⚙️ Products",
+        "📰 Articles"
+    ])
 
-    product_filter = st.sidebar.multiselect(
-        "Product",
-        options=df["product"].unique()
-    )
+    # -------------------------------
+    # OVERVIEW
+    # -------------------------------
+    with tab1:
+        col1, col2, col3, col4 = st.columns(4)
 
-    competitor_filter = st.sidebar.multiselect(
-        "Competitor",
-        options=df["competitor"].unique()
-    )
+        col1.metric("Total Articles", len(df))
+        col2.metric("High Relevance", len(df[df["score"] > 70]))
 
-    if product_filter:
-        df = df[df["product"].isin(product_filter)]
+        if len(df) > 0:
+            col3.metric("Top Competitor", df["competitor"].value_counts().idxmax())
+            col4.metric("Top Product", df["product"].value_counts().idxmax())
 
-    if competitor_filter:
-        df = df[df["competitor"].isin(competitor_filter)]
+        st.markdown("---")
 
-    # Show high relevance first
-    df = df.sort_values(by="score", ascending=False)
+        st.subheader("Competitor Activity")
+        comp_df = df["competitor"].value_counts().reset_index()
+        comp_df.columns = ["Competitor", "Count"]
+        st.bar_chart(comp_df.set_index("Competitor"))
 
-    # Clickable titles
-    df["title_link"] = df.apply(
-        lambda x: f'<a href="{x["link"]}" target="_blank">{x["title"]}</a>',
-        axis=1
-    )
+        st.subheader("Product Split")
+        prod_df = df["product"].value_counts().reset_index()
+        prod_df.columns = ["Product", "Count"]
+        st.bar_chart(prod_df.set_index("Product"))
 
-    st.subheader("📊 Results")
+    # -------------------------------
+    # COMPETITOR TAB
+    # -------------------------------
+    with tab2:
+        selected_comp = st.selectbox("Select Competitor", df["competitor"].unique())
+        comp_df = df[df["competitor"] == selected_comp]
+        st.dataframe(comp_df[["title", "product", "score"]])
 
-    st.write(
-        df[["title_link", "product", "competitor", "score"]]
-        .to_html(escape=False, index=False),
-        unsafe_allow_html=True
-    )
+    # -------------------------------
+    # PRODUCT TAB
+    # -------------------------------
+    with tab3:
+        selected_prod = st.selectbox("Select Product", df["product"].unique())
+        prod_df = df[df["product"] == selected_prod]
+        st.dataframe(prod_df[["title", "competitor", "score"]])
+
+    # -------------------------------
+    # ARTICLES TAB
+    # -------------------------------
+    with tab4:
+        df = df.sort_values(by="score", ascending=False)
+
+        df["title_link"] = df.apply(
+            lambda x: f'<a href="{x["link"]}" target="_blank">{x["title"]}</a>',
+            axis=1
+        )
+
+        st.write(
+            df[["title_link", "competitor", "product", "score"]]
+            .to_html(escape=False, index=False),
+            unsafe_allow_html=True
+        )
 
     st.caption(f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-
